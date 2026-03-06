@@ -16,4 +16,12 @@ router.post("/generate", generateOfflineTicket);
 // Send ticket email
 router.post("/send-email", sendOfflineTicketEmail);
 
+// Handle GET on send-email with helpful message
+router.get("/send-email", (req, res) => {
+  res.status(405).json({ 
+    msg: "Method not allowed. Use POST with { userId } in body",
+    example: { method: "POST", body: { userId: "user_id_here" } }
+  });
+});
+
 module.exports = router;
