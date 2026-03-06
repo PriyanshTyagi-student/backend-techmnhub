@@ -34,7 +34,8 @@ app.use(
       "www.techmnhub.com",
       "https://www.techmnhub.com",
       "https://checkin-system-techmnhub.tpriyansh973.workers.dev",
-      "www.checkin-system-techmnhub.tpriyansh973.workers.dev"
+      "www.checkin-system-techmnhub.tpriyansh973.workers.dev",
+      "https://ticket-generator.tpriyansh973.workers.dev"
     ],
     credentials: true,
   }),
