@@ -4,10 +4,19 @@ const { Resend } = require("resend");
 const RESEND_FROM = process.env.RESEND_FROM || "Zonex 2026 <noreply@techmnhub.com>";
 const SMTP_FROM = process.env.SMTP_FROM || RESEND_FROM;
 const EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || "auto").toLowerCase();
+const MAIL_CONNECT_TIMEOUT_MS = Number(process.env.MAIL_CONNECT_TIMEOUT_MS || 15000);
+const MAIL_GREETING_TIMEOUT_MS = Number(process.env.MAIL_GREETING_TIMEOUT_MS || 10000);
+const MAIL_SOCKET_TIMEOUT_MS = Number(process.env.MAIL_SOCKET_TIMEOUT_MS || 20000);
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
+
+const getTransportTimeoutOptions = () => ({
+  connectionTimeout: MAIL_CONNECT_TIMEOUT_MS,
+  greetingTimeout: MAIL_GREETING_TIMEOUT_MS,
+  socketTimeout: MAIL_SOCKET_TIMEOUT_MS,
+});
 
 const toSmtpAttachments = (attachments = []) => {
   return attachments.map((file) => ({
@@ -32,6 +41,7 @@ const getSmtpTransporter = () => {
     port: Number(process.env.SMTP_PORT || 587),
     secure: String(process.env.SMTP_SECURE || "false") === "true",
     auth: { user, pass },
+    ...getTransportTimeoutOptions(),
   });
 };
 
@@ -43,12 +53,19 @@ const getGmailTransporter = () => {
     throw new Error("Gmail credentials (EMAIL, EMAIL_PASS) not configured");
   }
 
+  const host = process.env.GMAIL_SMTP_HOST || "smtp.gmail.com";
+  const port = Number(process.env.GMAIL_SMTP_PORT || 465);
+  const secure = String(process.env.GMAIL_SMTP_SECURE || (port === 465 ? "true" : "false")) === "true";
+
   return nodemailer.createTransport({
-    service: "gmail",
+    host,
+    port,
+    secure,
     auth: {
       user: email,
       pass: password,
     },
+    ...getTransportTimeoutOptions(),
   });
 };
 
@@ -110,6 +127,32 @@ const sendWithGmail = async ({ to, subject, html, attachments }) => {
   };
 };
 
+const getProviderOrder = (mode) => {
+  if (mode === "auto") {
+    return ["resend", "gmail", "smtp"];
+  }
+
+  if (mode === "resend") {
+    return ["resend", "gmail", "smtp"];
+  }
+
+  if (mode === "gmail") {
+    return ["gmail", "smtp", "resend"];
+  }
+
+  if (mode === "smtp") {
+    return ["smtp", "gmail", "resend"];
+  }
+
+  throw new Error(`Unsupported EMAIL_PROVIDER: ${mode}. Use auto, resend, smtp, or gmail.`);
+};
+
+const providerSenders = {
+  resend: sendWithResend,
+  gmail: sendWithGmail,
+  smtp: sendWithSmtp,
+};
+
 const sendEmail = async ({ to, subject, html, attachments = [] }) => {
   console.log(`📤 Sending email to ${to} with subject: ${subject}`);
   console.log(`📨 Email provider mode: ${EMAIL_PROVIDER}`);
@@ -120,52 +163,45 @@ const sendEmail = async ({ to, subject, html, attachments = [] }) => {
     );
   }
 
-  if (EMAIL_PROVIDER === "resend") {
-    const resendResult = await sendWithResend({ to, subject, html, attachments });
-    console.log("✅ Email sent via Resend:", resendResult);
-    return { provider: "resend", data: resendResult };
+  const providersToTry = getProviderOrder(EMAIL_PROVIDER);
+  let lastErr;
+
+  for (let index = 0; index < providersToTry.length; index += 1) {
+    const provider = providersToTry[index];
+    const sendWithProvider = providerSenders[provider];
+    const isFallback = index > 0;
+    const nextProvider = providersToTry[index + 1];
+
+    try {
+      const result = await sendWithProvider({ to, subject, html, attachments });
+      console.log(
+        `✅ Email sent via ${provider.toUpperCase()}${isFallback ? " fallback" : ""}:`,
+        result,
+      );
+      return {
+        provider,
+        data: result,
+        fallbackFrom: isFallback ? providersToTry[0] : undefined,
+      };
+    } catch (err) {
+      lastErr = err;
+
+      if (nextProvider) {
+        console.error(
+          `❌ ${provider.toUpperCase()} failed, trying ${nextProvider.toUpperCase()}:`,
+          err.message || err,
+        );
+      } else {
+        console.error(`❌ ${provider.toUpperCase()} failed:`, err.message || err);
+      }
+    }
   }
 
-  if (EMAIL_PROVIDER === "smtp") {
-    const smtpResult = await sendWithSmtp({ to, subject, html, attachments });
-    console.log("✅ Email sent via SMTP:", smtpResult);
-    return { provider: "smtp", data: smtpResult };
-  }
-
-  if (EMAIL_PROVIDER === "gmail") {
-    const gmailResult = await sendWithGmail({ to, subject, html, attachments });
-    console.log("✅ Email sent via Gmail:", gmailResult);
-    return { provider: "gmail", data: gmailResult };
-  }
-
-  if (EMAIL_PROVIDER !== "auto") {
-    throw new Error(`Unsupported EMAIL_PROVIDER: ${EMAIL_PROVIDER}. Use auto, resend, smtp, or gmail.`);
-  }
-
-  try {
-    const resendResult = await sendWithResend({ to, subject, html, attachments });
-    console.log("✅ Email sent via Resend:", resendResult);
-    return { provider: "resend", data: resendResult };
-  } catch (resendErr) {
-    console.error("❌ Resend failed, trying Gmail fallback:", resendErr.message || resendErr);
-  }
-
-  try {
-    const gmailResult = await sendWithGmail({ to, subject, html, attachments });
-    console.log("✅ Email sent via Gmail fallback:", gmailResult);
-    return { provider: "gmail", data: gmailResult };
-  } catch (gmailErr) {
-    console.error("❌ Gmail fallback failed, trying SMTP:", gmailErr.message || gmailErr);
-  }
-
-  try {
-    const smtpResult = await sendWithSmtp({ to, subject, html, attachments });
-    console.log("✅ Email sent via SMTP fallback:", smtpResult);
-    return { provider: "smtp", data: smtpResult };
-  } catch (smtpErr) {
-    console.error("❌ SMTP fallback failed:", smtpErr.message || smtpErr);
-    throw new Error(`Email delivery failed. All providers exhausted. Last error: ${smtpErr.message}`);
-  }
+  throw new Error(
+    `Email delivery failed. Tried providers: ${providersToTry.join(", ")}. Last error: ${
+      (lastErr && lastErr.message) || lastErr || "Unknown error"
+    }`,
+  );
 };
 
 module.exports = sendEmail;
