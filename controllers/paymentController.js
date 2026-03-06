@@ -2,8 +2,7 @@ const razorpay = require("../config/razorpay");
 const crypto = require("crypto");
 const User = require("../models/User");
 const generateQR = require("../utils/generateQR");
-const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
-const sendEmail = require("../utils/sendEmail");
+const sendTicketEmail = require("../utils/sendTicketEmail");
 
 // Create Razorpay order
 exports.createOrder = async (req, res) => {
@@ -67,99 +66,22 @@ exports.verifyPayment = async (req, res) => {
     user.qrCode = qr;
     await user.save();
 
-    const qrAttachment = buildQrEmailAttachment(
-      user.qrCode,
-      `${user.registrationId}-qr.png`,
-    );
-
-    const qrBlock = qrAttachment
-      ? `
-        <div style="margin: 20px 0; text-align: center;">
-          <img src="cid:${qrAttachment.contentId}" alt="QR Code" style="width: 220px; height: 220px; border-radius: 10px; border: 2px solid #06b6d4;" />
-          <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this QR at venue entrance</p>
-        </div>
-      `
-      : "";
-
-    // Create activities list
-    const activitiesList = user.subCategory && user.subCategory.length > 0
-      ? user.subCategory.map(a => `• ${a}`).join('<br>')
-      : 'Not specified';
-
-    // Create team members list for hackathon
-    let teamInfo = '';
-    if (user.subCategory && user.subCategory.includes('Hackathon') && user.teamMembers && user.teamMembers.length > 0) {
-      teamInfo = `
-        <div style="background: #f0f0f0; padding: 15px; border-radius: 8px; margin: 15px 0;">
-          <p><strong>👥 Team Members (Hackathon):</strong></p>
-          ${user.teamMembers.map((member, idx) => `
-            <p style="margin: 5px 0; padding-left: 15px;">
-              ${idx === 0 ? '👑 Team Leader: ' : '• '}${member}
-            </p>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    // Email HTML
-    const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
-        <h1 style="color: #06b6d4; text-align: center;">🎟️ Zonex 2026 – Registration Confirmed</h1>
-        <p style="font-size: 18px;">Hello <strong>${user.fullName}</strong>,</p>
-        <p>Thank you for registering! Your payment was successful.</p>
-        
-        <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Registration ID:</strong></p>
-          <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
-
-          ${qrBlock}
-          
-          <p><strong>Event:</strong> Zonex 2026 | 7 March 2026 | Muzaffarnagar</p>
-          <p><strong>Category:</strong> ${user.category}</p>
-          <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
-          
-          ${teamInfo}
-          
-          <p><strong>Pass:</strong> ${user.passName || "Pro Participation"}</p>
-          <p><strong>Amount Paid:</strong> ₹${user.amountPaid}</p>
-        </div>
-
-
-        <hr style="border: none; border-top: 1px solid #ddd;" />
-        <p style="font-size: 14px; color: #555;">
-          Please save this email. Show the registration ID at the registration desk on the day of the event.<br />
-          For any queries, reply to this email.
-        </p>
-        <p style="font-size: 14px; color: #999;">– Team TechMNHub</p>
-      </div>
-    `;
-
-    // Send email
-    let emailSent = false;
+    // Send ticket email via global sender
+    let emailResult = null;
     try {
-      if (user.email) {
-        const attachmentList = qrAttachment ? [qrAttachment] : [];
-        console.log(`📎 Sending payment confirmation email with ${attachmentList.length} attachment(s)`);
-        await sendEmail({
-          to: user.email,
-          subject: "✅ Zonex 2026 – Your Ticket ",
-          html: emailHtml,
-          attachments: attachmentList,
-        });
-        console.log(`✅ Payment confirmation email sent to ${user.email}`);
-        emailSent = true;
-      }
+      emailResult = await sendTicketEmail(user);
+      console.log(`✅ Ticket email sent: ${emailResult.email}`);
     } catch (emailErr) {
-      console.error(`❌ Payment email send failed: ${emailErr.message}`, emailErr);
+      console.error(`❌ Ticket email failed:`, emailErr.message);
     }
 
     res.json({
-      msg: emailSent
+      msg: emailResult
         ? "Payment verified & ticket sent to email"
         : "Payment verified, but ticket email failed",
       registrationId: user.registrationId,
       qrCode: user.qrCode,
-      emailSent,
+      emailSent: !!emailResult,
     });
 
   } catch (err) {

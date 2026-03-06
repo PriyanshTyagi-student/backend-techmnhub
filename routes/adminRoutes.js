@@ -6,7 +6,9 @@ const {
   getUser,
   deleteUser,
   checkInUser,
-  getStats
+  getStats,
+  sendTicketToUser,
+  bulkSendTickets
 } = require('../controllers/adminController');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -19,5 +21,9 @@ router.get('/users/:id', authMiddleware, getUser);
 router.delete('/users/:id', authMiddleware, deleteUser);
 router.put('/users/:id/checkin', authMiddleware, checkInUser);
 router.get('/stats', authMiddleware, getStats);
+
+// Ticket sending routes
+router.post('/send-ticket', authMiddleware, sendTicketToUser);
+router.post('/bulk-send-tickets', authMiddleware, bulkSendTickets);
 
 module.exports = router;

@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const sendTicketEmail = require('../utils/sendTicketEmail');
 
 // @desc    Admin Login
 exports.login = async (req, res) => {
@@ -122,5 +123,76 @@ exports.getStats = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Send ticket email to a single user
+exports.sendTicketToUser = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ msg: "userId required" });
+    }
+
+    const result = await sendTicketEmail(userId);
+
+    res.json({
+      msg: "Ticket sent successfully",
+      ...result,
+    });
+  } catch (err) {
+    console.error(`❌ sendTicketToUser error:`, err.message);
+    res.status(500).json({ msg: err.message || "Failed to send ticket" });
+  }
+};
+
+// @desc    Bulk send tickets to all paid users who haven't received email
+exports.bulkSendTickets = async (req, res) => {
+  try {
+    const { limit = 50, paidOnly = true } = req.body;
+
+    console.log(`📧 Bulk send tickets: limit=${limit}, paidOnly=${paidOnly}`);
+
+    const query = paidOnly ? { paymentStatus: "paid" } : {};
+    const users = await User.find(query).limit(limit);
+
+    if (users.length === 0) {
+      return res.status(400).json({ msg: "No users found" });
+    }
+
+    const results = {
+      total: users.length,
+      sent: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    for (const user of users) {
+      try {
+        await sendTicketEmail(user);
+        results.sent++;
+      } catch (userErr) {
+        results.failed++;
+        results.errors.push({
+          userId: user._id,
+          email: user.email,
+          error: userErr.message,
+        });
+        console.error(`❌ Failed for ${user.email}:`, userErr.message);
+      }
+    }
+
+    console.log(
+      `✅ Bulk send complete: sent=${results.sent}, failed=${results.failed}`,
+    );
+
+    res.json({
+      msg: "Bulk send completed",
+      results,
+    });
+  } catch (err) {
+    console.error(`❌ bulkSendTickets error:`, err.message);
+    res.status(500).json({ msg: err.message || "Bulk send failed" });
   }
 };
