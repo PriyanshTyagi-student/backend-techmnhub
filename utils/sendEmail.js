@@ -128,20 +128,8 @@ const sendWithGmail = async ({ to, subject, html, attachments }) => {
 };
 
 const getProviderOrder = (mode) => {
-  if (mode === "auto") {
+  if (["auto", "resend", "gmail", "smtp"].includes(mode)) {
     return ["resend", "gmail", "smtp"];
-  }
-
-  if (mode === "resend") {
-    return ["resend", "gmail", "smtp"];
-  }
-
-  if (mode === "gmail") {
-    return ["gmail", "resend", "smtp"];
-  }
-
-  if (mode === "smtp") {
-    return ["smtp", "resend", "gmail"];
   }
 
   throw new Error(`Unsupported EMAIL_PROVIDER: ${mode}. Use auto, resend, smtp, or gmail.`);
