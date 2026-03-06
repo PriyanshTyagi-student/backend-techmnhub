@@ -2,6 +2,7 @@ const razorpay = require("../config/razorpay");
 const crypto = require("crypto");
 const User = require("../models/User");
 const generateQR = require("../utils/generateQR");
+const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
 const sendEmail = require("../utils/sendEmail");
 
 // Create Razorpay order
@@ -54,12 +55,31 @@ exports.verifyPayment = async (req, res) => {
       return res.status(400).json({ msg: "Already paid" });
     }
 
+    // Make sure registrationId exists before generating QR.
+    if (!user.registrationId) {
+      user.registrationId = `ZNX-${Date.now()}-${String(user._id).slice(-4).toUpperCase()}`;
+    }
+
     // Mark paid & generate QR
     user.paymentStatus = "paid";
     user.paymentId = razorpay_payment_id;
     const qr = await generateQR(user.registrationId);
     user.qrCode = qr;
     await user.save();
+
+    const qrAttachment = buildQrEmailAttachment(
+      user.qrCode,
+      `${user.registrationId}-qr.png`,
+    );
+
+    const qrBlock = qrAttachment
+      ? `
+        <div style="margin: 20px 0; text-align: center;">
+          <img src="cid:${qrAttachment.contentId}" alt="QR Code" style="width: 220px; height: 220px; border-radius: 10px; border: 2px solid #06b6d4;" />
+          <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this QR at venue entrance</p>
+        </div>
+      `
+      : "";
 
     // Create activities list
     const activitiesList = user.subCategory && user.subCategory.length > 0
@@ -91,6 +111,8 @@ exports.verifyPayment = async (req, res) => {
         <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Registration ID:</strong></p>
           <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
+
+          ${qrBlock}
           
           <p><strong>Event:</strong> Zonex 2026 | 7 March 2026 | Muzaffarnagar</p>
           <p><strong>Category:</strong> ${user.category}</p>
@@ -113,23 +135,31 @@ exports.verifyPayment = async (req, res) => {
     `;
 
     // Send email
+    let emailSent = false;
     try {
       if (user.email) {
+        const attachmentList = qrAttachment ? [qrAttachment] : [];
+        console.log(`📎 Sending payment confirmation email with ${attachmentList.length} attachment(s)`);
         await sendEmail({
           to: user.email,
           subject: "✅ Zonex 2026 – Your Ticket ",
           html: emailHtml,
+          attachments: attachmentList,
         });
-        console.log(`📧 Ticket email sent to ${user.email}`);
+        console.log(`✅ Payment confirmation email sent to ${user.email}`);
+        emailSent = true;
       }
     } catch (emailErr) {
-      console.error("❌ Email send failed:", emailErr);
+      console.error(`❌ Payment email send failed: ${emailErr.message}`, emailErr);
     }
 
     res.json({
-      msg: "Payment verified & ticket sent to email",
+      msg: emailSent
+        ? "Payment verified & ticket sent to email"
+        : "Payment verified, but ticket email failed",
       registrationId: user.registrationId,
       qrCode: user.qrCode,
+      emailSent,
     });
 
   } catch (err) {

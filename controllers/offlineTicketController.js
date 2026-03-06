@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const generateQR = require("../utils/generateQR");
+const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
 const sendEmail = require("../utils/sendEmail");
 
 // Generate unique registration ID
@@ -109,11 +110,19 @@ exports.generateOfflineTicket = async (req, res) => {
 exports.sendOfflineTicketEmail = async (req, res) => {
   try {
     const { userId } = req.body;
+    console.log(`📨 sendOfflineTicketEmail called with userId: ${userId}`);
+
+    if (!userId) {
+      console.log(`❌ No userId provided`);
+      return res.status(400).json({ msg: "User ID required" });
+    }
 
     const user = await User.findById(userId);
     if (!user) {
+      console.log(`❌ User not found with id: ${userId}`);
       return res.status(404).json({ msg: "User not found" });
     }
+    console.log(`✅ User found: ${user.fullName} (${user.email})`);
 
     // Create activities list
     const activitiesList = user.subCategory && user.subCategory.length > 0
@@ -135,6 +144,22 @@ exports.sendOfflineTicketEmail = async (req, res) => {
       `;
     }
 
+    const qrAttachment = buildQrEmailAttachment(
+      user.qrCode,
+      `${user.registrationId}-qr.png`,
+    );
+
+    const qrBlock = qrAttachment
+      ? `
+          <div style="margin: 20px 0;">
+            <img src="cid:${qrAttachment.contentId}" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" />
+            <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this at venue entrance</p>
+          </div>
+        `
+      : `
+          <p style="font-size: 12px; color: #b45309; margin-top: 10px;">QR could not be embedded in this email. Please use your registration ID at the desk.</p>
+        `;
+
     // Email HTML with QR code
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
@@ -146,10 +171,7 @@ exports.sendOfflineTicketEmail = async (req, res) => {
           <p><strong>Registration ID:</strong></p>
           <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
           
-          <div style="margin: 20px 0;">
-            <img src="${user.qrCode}" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" />
-            <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this at venue entrance</p>
-          </div>
+          ${qrBlock}
         </div>
 
         <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -174,22 +196,34 @@ exports.sendOfflineTicketEmail = async (req, res) => {
     `;
 
     // Send email
-    await sendEmail({
-      to: user.email,
-      subject: "✅ Zonex 2026 – Your Ticket (Offline Registration)",
-      html: emailHtml,
-    });
+    console.log(`💼 Preparing email payload...`);
+    const attachmentList = qrAttachment ? [qrAttachment] : [];
+    console.log(`📎 Will send with ${attachmentList.length} attachment(s)`);
+    
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "✅ Zonex 2026 – Your Ticket (Offline Registration)",
+        html: emailHtml,
+        attachments: attachmentList,
+      });
+      console.log(`✅ Email successfully sent to ${user.email}`);
 
-    console.log(`📧 Offline ticket email sent to ${user.email}`);
-
-    res.json({
-      msg: "Email sent successfully",
-      email: user.email,
-    });
+      res.json({
+        msg: "Email sent successfully",
+        email: user.email,
+      });
+    } catch (emailErr) {
+      console.error(`❌ Email send failed: ${emailErr.message}`, emailErr);
+      throw emailErr;
+    }
 
   } catch (err) {
-    console.error("❌ Email send error:", err);
-    res.status(500).json({ msg: err.message || "Failed to send email" });
+    console.error("❌ Offline ticket email endpoint error:", err.message || err);
+    res.status(500).json({ 
+      msg: err.message || "Failed to send email",
+      error: err.message 
+    });
   }
 };
 
