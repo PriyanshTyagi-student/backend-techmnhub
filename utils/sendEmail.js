@@ -137,11 +137,11 @@ const getProviderOrder = (mode) => {
   }
 
   if (mode === "gmail") {
-    return ["gmail", "smtp", "resend"];
+    return ["gmail", "resend", "smtp"];
   }
 
   if (mode === "smtp") {
-    return ["smtp", "gmail", "resend"];
+    return ["smtp", "resend", "gmail"];
   }
 
   throw new Error(`Unsupported EMAIL_PROVIDER: ${mode}. Use auto, resend, smtp, or gmail.`);
